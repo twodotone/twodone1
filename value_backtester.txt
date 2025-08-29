@@ -1,0 +1,121 @@
+# value_backtester.py
+
+import pandas as pd
+import nfl_data_py as nfl
+# --- Importing from our final, correct production calculator ---
+from stats_calculator import (
+    get_last_n_games_pbp,
+    calculate_granular_epa_stats,
+    generate_stable_matchup_line
+)
+
+def run_value_backtest(year, weeks, value_threshold, recent_games_window, recent_form_weight):
+    """
+    Runs a backtest for a single season using the final, value-centric logic.
+    """
+    print(f"  - Loading PBP and Schedule data for {year}...")
+    pbp_data = nfl.import_pbp_data([year], downcast=True)
+    schedule_data = nfl.import_schedules([year])
+    all_picks = []
+
+    for week in weeks:
+        week_schedule = schedule_data[schedule_data['week'] == week]
+        pbp_upto_week = pbp_data[pbp_data['week'] < week]
+        if week_schedule.empty or pbp_upto_week.empty:
+            continue
+
+        for game in week_schedule.itertuples():
+            home_team, away_team = game.home_team, game.away_team
+            if pd.isna(game.result): continue
+
+            # --- Step 1: Establish the correct Vegas Spread using Moneyline ---
+            home_ml = getattr(game, 'home_moneyline', None)
+            away_ml = getattr(game, 'away_moneyline', None)
+            spread_magnitude = abs(getattr(game, 'spread_line', 0))
+            
+            if home_ml is not None and away_ml is not None:
+                if home_ml < away_ml: home_spread_vegas = -spread_magnitude
+                else: home_spread_vegas = spread_magnitude
+            else:
+                continue # Skip if no moneyline to confirm favorite
+
+            # --- Step 2: Calculate the Model's Predicted Spread ---
+            away_stats_std = calculate_granular_epa_stats(pbp_upto_week, away_team)
+            home_stats_std = calculate_granular_epa_stats(pbp_upto_week, home_team)
+            pbp_away_recent = get_last_n_games_pbp(pbp_upto_week, away_team, recent_games_window)
+            pbp_home_recent = get_last_n_games_pbp(pbp_upto_week, home_team, recent_games_window)
+            away_stats_recent = calculate_granular_epa_stats(pbp_away_recent, away_team)
+            home_stats_recent = calculate_granular_epa_stats(pbp_home_recent, home_team)
+            
+            if not all([home_stats_std, away_stats_std]): continue
+
+            all_keys = set(away_stats_std.keys()) | set(away_stats_recent.keys())
+            away_stats_w, home_stats_w = {}, {}
+            for key in all_keys:
+                away_stats_w[key] = (away_stats_std.get(key, 0) * (1-recent_form_weight)) + (away_stats_recent.get(key, 0) * recent_form_weight)
+                home_stats_w[key] = (home_stats_std.get(key, 0) * (1-recent_form_weight)) + (home_stats_recent.get(key, 0) * recent_form_weight)
+            
+            model_home_spread = generate_stable_matchup_line(home_stats_w, away_stats_w)
+
+            # --- Step 3: Calculate the Value Edge and Make a Pick ---
+            model_edge = home_spread_vegas - model_home_spread
+            
+            if abs(model_edge) >= value_threshold:
+                pick = home_team if model_edge > 0 else away_team
+                
+                # --- Step 4: Evaluate the Pick Against the Actual Result ---
+                actual_home_margin = game.result
+                if (actual_home_margin + home_spread_vegas) > 0:
+                    covering_team = home_team
+                elif (actual_home_margin + home_spread_vegas) < 0:
+                    covering_team = away_team
+                else:
+                    covering_team = "Push"
+                
+                if covering_team != "Push":
+                    is_win = 1 if pick == covering_team else 0
+                    all_picks.append({'is_win': is_win})
+
+    if not all_picks:
+        return 0, 0
+
+    df = pd.DataFrame(all_picks)
+    wins = df['is_win'].sum()
+    losses = len(df) - wins
+    return wins, losses
+
+
+if __name__ == '__main__':
+    # --- Parameters as Requested ---
+    YEAR_TO_TEST = 2024
+    WEEKS_TO_TEST = range(6, 18) # Weeks 6 through 17
+    
+    # --- We can test different settings for recency ---
+    RECENT_GAMES_WINDOW = 8
+    RECENT_FORM_WEIGHT = 0.20
+    
+    # --- Let's test a few different "value" thresholds ---
+    THRESHOLDS_TO_TEST = [2.0, 2.5, 3.0, 3.5, 4.0]
+    
+    print("="*60)
+    print(f"--- Running Value-Centric Backtest for {YEAR_TO_TEST} Season ---")
+    print(f"Analyzing Weeks: {WEEKS_TO_TEST.start}-{WEEKS_TO_TEST.stop - 1}")
+    print(f"Recency Settings: Last {RECENT_GAMES_WINDOW} Games @ {RECENT_FORM_WEIGHT*100:.0f}% Weight")
+    print("="*60)
+    
+    for threshold in THRESHOLDS_TO_TEST:
+        wins, losses = run_value_backtest(
+            YEAR_TO_TEST, WEEKS_TO_TEST, threshold, RECENT_GAMES_WINDOW, RECENT_FORM_WEIGHT
+        )
+        
+        total_games = wins + losses
+        win_pct = (wins / total_games) * 100 if total_games > 0 else 0
+        
+        print(f"\n--- Threshold: {threshold:.1f} points of value ---")
+        if total_games > 0:
+            print(f"  Record (W-L):         {wins} - {losses}")
+            print(f"  Games Identified:     {total_games}")
+            print(f"  Win Percentage:       {win_pct:.2f}%")
+        else:
+            print("  No games met this value threshold.")
+        print("-" * 35)

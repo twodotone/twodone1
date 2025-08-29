@@ -1,0 +1,167 @@
+# stats_calculator_prod.py
+
+import pandas as pd
+import streamlit as st
+
+def get_last_n_games_pbp(full_pbp_df, team_abbr, n_games):
+    """
+    Extracts the play-by-play data for the last N regular season games for a given team.
+    """
+    team_games = full_pbp_df[((full_pbp_df['home_team'] == team_abbr) | (full_pbp_df['away_team'] == team_abbr)) & (full_pbp_df['season_type'] == 'REG')]
+    if team_games.empty:
+        return pd.DataFrame()
+    unique_games = team_games[['game_id', 'week']].drop_duplicates().sort_values(by='week', ascending=False)
+    last_n_game_ids = unique_games['game_id'].head(n_games).tolist()
+    return full_pbp_df[full_pbp_df['game_id'].isin(last_n_game_ids)]
+
+def calculate_explosive_play_rates(pbp_df):
+    """
+    Calculates the rate of explosive plays (runs >= 10 yards, passes >= 20 yards).
+    """
+    explosive_runs = pbp_df[(pbp_df['play_type'] == 'run') & (pbp_df['yards_gained'] >= 10)]
+    explosive_passes = pbp_df[(pbp_df['play_type'] == 'pass') & (pbp_df['yards_gained'] >= 20)]
+    total_runs = pbp_df[pbp_df['play_type'] == 'run'].shape[0]
+    total_passes = pbp_df[pbp_df['play_type'] == 'pass'].shape[0]
+    total_plays = total_runs + total_passes
+    total_explosive_plays = len(explosive_runs) + len(explosive_passes)
+    return total_explosive_plays / total_plays if total_plays > 0 else 0
+
+def calculate_granular_epa_stats(pbp_df, team_abbr):
+    """
+    Calculates opponent-adjusted EPA stats for Offense, Defense, and Special Teams.
+    """
+    # --- FIX: Add a check for an empty DataFrame to prevent KeyErrors ---
+    if pbp_df.empty:
+        return {}
+
+    pbp_reg = pbp_df[pbp_df['season_type'] == 'REG'].copy()
+    if pbp_reg.empty:
+        return {}
+    
+    stats = {}
+    
+    # --- Offense and Defense Calculations ---
+    pbp_off_def = pbp_reg[(pbp_reg['play_type'] == 'pass') | (pbp_reg['play_type'] == 'run')].copy()
+    if not pbp_off_def.empty:
+        lg_off_rush_epa = pbp_off_def[pbp_off_def['play_type'] == 'run'].groupby('posteam')['epa'].mean()
+        lg_off_pass_epa = pbp_off_def[pbp_off_def['play_type'] == 'pass'].groupby('posteam')['epa'].mean()
+        lg_def_rush_epa = pbp_off_def[pbp_off_def['play_type'] == 'run'].groupby('defteam')['epa'].mean()
+        lg_def_pass_epa = pbp_off_def[pbp_off_def['play_type'] == 'pass'].groupby('defteam')['epa'].mean()
+
+        off_plays = pbp_off_def[pbp_off_def['posteam'] == team_abbr]
+        def_plays = pbp_off_def[pbp_off_def['defteam'] == team_abbr]
+
+        if not off_plays.empty:
+            total_plays = len(off_plays)
+            rush_plays = off_plays[off_plays['play_type'] == 'run']
+            pass_plays = off_plays[off_plays['play_type'] == 'pass']
+            stats['Rush_Pct'] = len(rush_plays) / total_plays if total_plays > 0 else 0
+            stats['Pass_Pct'] = len(pass_plays) / total_plays if total_plays > 0 else 0
+            opponents_faced = off_plays['defteam'].unique()
+            if not rush_plays.empty: stats['Off_Rush_EPA'] = rush_plays['epa'].mean() - lg_def_rush_epa.reindex(opponents_faced).mean()
+            if not pass_plays.empty: stats['Off_Pass_EPA'] = pass_plays['epa'].mean() - lg_def_pass_epa.reindex(opponents_faced).mean()
+            stats['Off_Explosive_Rate'] = calculate_explosive_play_rates(off_plays)
+
+        if not def_plays.empty:
+            opponents_faced = def_plays['posteam'].unique()
+            rush_plays_faced = def_plays[def_plays['play_type'] == 'run']
+            pass_plays_faced = def_plays[def_plays['play_type'] == 'pass']
+            if not rush_plays_faced.empty: stats['Def_Rush_EPA'] = rush_plays_faced['epa'].mean() - lg_off_rush_epa.reindex(opponents_faced).mean()
+            if not pass_plays_faced.empty: stats['Def_Pass_EPA'] = pass_plays_faced['epa'].mean() - lg_off_pass_epa.reindex(opponents_faced).mean()
+            stats['Def_Explosive_Rate'] = calculate_explosive_play_rates(def_plays)
+            
+    # --- Special Teams Calculation ---
+    st_play_types = ['field_goal', 'punt', 'kickoff', 'extra_point']
+    pbp_st = pbp_reg[pbp_reg['play_type'].isin(st_play_types)].copy()
+    if not pbp_st.empty:
+        st_for_epa = pbp_st[pbp_st['posteam'] == team_abbr]['epa'].mean()
+        st_against_epa = pbp_st[pbp_st['defteam'] == team_abbr]['epa'].mean()
+        stats['Net_ST_EPA'] = st_for_epa - st_against_epa
+
+    return stats
+
+# --- FINAL, PRODUCTION PREDICTION ENGINE (with Special Teams) ---
+def generate_stable_matchup_line(home_stats, away_stats, home_field_advantage=1.5, plays_per_game=65):
+    """
+    Generates a predicted line based on the granular EPA matchup engine,
+    now including a final adjustment for special teams performance.
+    """
+    SPECIAL_TEAMS_WEIGHT = 2.0 
+
+    # --- Phase 1: Simulate Offense vs. Defense ---
+    home_rush_outcome = (home_stats.get('Off_Rush_EPA', 0) + away_stats.get('Def_Rush_EPA', 0)) / 2
+    home_pass_outcome = (home_stats.get('Off_Pass_EPA', 0) + away_stats.get('Def_Pass_EPA', 0)) / 2
+    home_exp_outcome_per_play = (home_rush_outcome * home_stats.get('Rush_Pct', 0.5)) + \
+                                (home_pass_outcome * home_stats.get('Pass_Pct', 0.5))
+
+    away_rush_outcome = (away_stats.get('Off_Rush_EPA', 0) + home_stats.get('Def_Rush_EPA', 0)) / 2
+    away_pass_outcome = (away_stats.get('Off_Pass_EPA', 0) + home_stats.get('Def_Pass_EPA', 0)) / 2
+    away_exp_outcome_per_play = (away_rush_outcome * away_stats.get('Rush_Pct', 0.5)) + \
+                                (away_pass_outcome * away_stats.get('Pass_Pct', 0.5))
+
+    net_adv_per_play = home_exp_outcome_per_play - away_exp_outcome_per_play
+    neutral_margin_off_def = net_adv_per_play * plays_per_game
+
+    # --- Phase 2: Special Teams Adjustment ---
+    home_net_st_epa = home_stats.get('Net_ST_EPA', 0)
+    away_net_st_epa = away_stats.get('Net_ST_EPA', 0)
+    special_teams_adjustment = (home_net_st_epa - away_net_st_epa) * SPECIAL_TEAMS_WEIGHT
+
+    # --- Phase 3: Combine All Factors ---
+    final_margin = neutral_margin_off_def + home_field_advantage + special_teams_adjustment
+    
+    return final_margin * -1 # Return as a spread
+
+# --- Legacy functions kept for UI compatibility (e.g., Insights, Power Rankings) ---
+def calculate_advanced_comparison_stats(pbp_df, team_abbr):
+    pbp_reg_season = pbp_df[(pbp_df['season_type'] == 'REG') & ((pbp_df['play_type'] == 'pass') | (pbp_df['play_type'] == 'run'))].copy()
+    if pbp_reg_season.empty: return {}
+    offense_epa_avg_by_team = pbp_reg_season.groupby('posteam')['epa'].mean().rename('avg_off_epa')
+    defense_epa_avg_by_team = pbp_reg_season.groupby('defteam')['epa'].mean().rename('avg_def_epa_allowed')
+    off_plays = pbp_reg_season[pbp_reg_season['posteam'] == team_abbr]
+    def_plays = pbp_reg_season[pbp_reg_season['defteam'] == team_abbr]
+    stats = {}
+    if not off_plays.empty:
+        stats['Points/Play'] = off_plays['epa'].mean() - defense_epa_avg_by_team.loc[off_plays['defteam'].unique()].mean()
+        stats['Plays/Game'] = len(off_plays) / off_plays['game_id'].nunique()
+    if not def_plays.empty:
+        stats['Opp Points/Play'] = offense_epa_avg_by_team.loc[def_plays['posteam'].unique()].mean() - def_plays['epa'].mean()
+        stats['Opp Plays/Game'] = len(def_plays) / def_plays['game_id'].nunique()
+    return stats
+
+def calculate_adjusted_recent_stats(recent_pbp_df, full_season_pbp_df, team_abbr):
+    full_pbp_reg = full_season_pbp_df[(full_season_pbp_df['season_type'] == 'REG') & ((full_season_pbp_df['play_type'] == 'pass') | (full_season_pbp_df['play_type'] == 'run'))].copy()
+    if full_pbp_reg.empty or recent_pbp_df.empty: return {}
+    offense_epa_baselines = full_pbp_reg.groupby('posteam')['epa'].mean()
+    defense_epa_baselines = full_pbp_reg.groupby('defteam')['epa'].mean()
+    recent_pbp_reg = recent_pbp_df[(recent_pbp_df['season_type'] == 'REG') & ((recent_pbp_df['play_type'] == 'pass') | (recent_pbp_df['play_type'] == 'run'))].copy()
+    off_plays = recent_pbp_reg[recent_pbp_reg['posteam'] == team_abbr]
+    def_plays = recent_pbp_reg[recent_pbp_reg['defteam'] == team_abbr]
+    stats = {}
+    if not off_plays.empty:
+        stats['Points/Play'] = off_plays['epa'].mean() - defense_epa_baselines.reindex(off_plays['defteam'].unique()).mean()
+        stats['Plays/Game'] = len(off_plays) / off_plays['game_id'].nunique()
+    if not def_plays.empty:
+        stats['Opp Points/Play'] = offense_epa_baselines.reindex(def_plays['posteam'].unique()).mean() - def_plays['epa'].mean()
+        stats['Opp Plays/Game'] = len(def_plays) / def_plays['game_id'].nunique()
+    return stats
+
+@st.cache_data(ttl=3600)
+def calculate_all_team_stats(pbp_df, team_list):
+    all_stats = {}
+    for team in team_list:
+        all_stats[team] = calculate_advanced_comparison_stats(pbp_df, team)
+    return all_stats
+
+def generate_power_rankings(all_team_stats):
+    rankings = []
+    for team, stats in all_team_stats.items():
+        off_epa = stats.get('Points/Play', 0)
+        def_epa = stats.get('Opp Points/Play', 0)
+        power_score = off_epa + def_epa
+        rankings.append({'Team': team, 'Offensive EPA': off_epa, 'Defensive EPA': def_epa, 'Power Score': power_score})
+    df = pd.DataFrame(rankings)
+    df = df.sort_values(by='Power Score', ascending=False).reset_index(drop=True)
+    df['Rank'] = df.index + 1
+    df = df[['Rank', 'Team', 'Power Score', 'Offensive EPA', 'Defensive EPA']]
+    return df.style.format({'Power Score': "{:+.3f}", 'Offensive EPA': "{:+.3f}", 'Defensive EPA': "{:+.3f}"})

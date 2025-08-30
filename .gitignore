@@ -1,0 +1,9 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual Environment
+nfl_project/
+.env
+venv/
+ENV/

@@ -38,8 +38,15 @@ def update_betting_lines():
     print(f"Fetching betting lines for {CURRENT_YEAR}, Week {current_week}...")
 
     try:
-        # Fetch the latest odds for the current week
-        weekly_odds_df = nfl.import_weekly_odds(years=[CURRENT_YEAR], weeks=[current_week])
+        # The schedule now contains all game info, including betting lines
+        schedule_df = nfl.import_schedules(years=[CURRENT_YEAR])
+
+        if schedule_df.empty:
+            print(f"No schedule data found for {CURRENT_YEAR}. It might be too early.")
+            return
+
+        # Filter down to the specific week we're updating
+        weekly_odds_df = schedule_df[schedule_df['week'] == current_week].copy()
 
         if weekly_odds_df.empty:
             print(f"No odds data found for Week {current_week}. It might be too early.")
@@ -53,7 +60,7 @@ def update_betting_lines():
             # Combine data and remove duplicates, keeping the newest entry for each game.
             # This prevents duplicate rows if the script runs multiple times for the same week.
             combined_df = pd.concat([existing_odds_df, weekly_odds_df]).drop_duplicates(
-                subset=['game_id', 'provider'], keep='last'
+                subset=['game_id'], keep='last' # A game_id is unique per week
             )
         else:
             combined_df = weekly_odds_df

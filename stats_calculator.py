@@ -4,12 +4,18 @@ import streamlit as st
 @st.cache_data
 def get_last_n_games_pbp(full_pbp_df, team_abbr, n_games):
     """
-    Extracts the play-by-play data for the last N regular season games for a given team.
+    Extracts the play-by-play data for the last N regular season games for a given team,
+    correctly handling data that spans multiple seasons.
     """
     team_games = full_pbp_df[((full_pbp_df['home_team'] == team_abbr) | (full_pbp_df['away_team'] == team_abbr)) & (full_pbp_df['season_type'] == 'REG')]
     if team_games.empty:
         return pd.DataFrame()
-    unique_games = team_games[['game_id', 'week']].drop_duplicates().sort_values(by='week', ascending=False)
+    
+    # Sort by season and week to get the true chronological order of games
+    unique_games = team_games[['game_id', 'season', 'week']].drop_duplicates().sort_values(
+        by=['season', 'week'], ascending=[False, False]
+    )
+    
     last_n_game_ids = unique_games['game_id'].head(n_games).tolist()
     return full_pbp_df[full_pbp_df['game_id'].isin(last_n_game_ids)]
 

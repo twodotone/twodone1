@@ -3,7 +3,7 @@
 import streamlit as st
 import pandas as pd
 import nfl_data_py as nfl
-from data_loader import load_full_season_pbp
+from data_loader import load_rolling_data
 from stats_calculator import (
     get_last_n_games_pbp,
     calculate_granular_epa_stats,
@@ -74,22 +74,29 @@ else:
             col4.metric("Home Spread", f"{home_spread_vegas:+.1f}")
             col5.image(home_logo, width=70)
 
-        # --- Data Prep based on Mode ---
-        
-        if CURRENT_YEAR >= 2025:
-            st.info("Displaying **live predictions** for the upcoming season based on prior year data.")
-            prediction_year = CURRENT_YEAR - 1
-            pbp_data_for_stats = load_full_season_pbp(prediction_year)
+        # --- Data Prep using Rolling Window ---
+        st.info("Using a rolling data window including the previous season for statistical analysis.")
+
+        # Load data from the current selected year and the year prior.
+        combined_pbp_data = load_rolling_data(CURRENT_YEAR)
+
+        # Filter data to include only games played *before* the selected week of the current season.
+        if not combined_pbp_data.empty:
+            pbp_data_for_stats = combined_pbp_data[
+                (combined_pbp_data['season'] < CURRENT_YEAR) | 
+                ((combined_pbp_data['season'] == CURRENT_YEAR) & (combined_pbp_data['week'] < CURRENT_WEEK))
+            ].copy()
+            
+            # Show a warning for early-season predictions
+            if CURRENT_WEEK < 4 and (pbp_data_for_stats.empty or CURRENT_YEAR == pbp_data_for_stats['season'].max()):
+                st.warning("Model performance may be unreliable with less than 3 weeks of new season data.")
         else:
-            st.info("Displaying **interactive backtest** for a completed historical game.")
-            if CURRENT_WEEK < 4: st.warning("Model performance may be unreliable with less than 3 weeks of data.")
-            prediction_year = CURRENT_YEAR
-            pbp_data_full_season = load_full_season_pbp(prediction_year)
-            pbp_data_for_stats = pbp_data_full_season[pbp_data_full_season['week'] < CURRENT_WEEK]
+            pbp_data_for_stats = pd.DataFrame()
+
 
         # --- Add this check to gracefully stop if data loading failed ---
         if pbp_data_for_stats.empty:
-            st.warning("Could not retrieve the necessary play-by-play data. Please try again later.")
+            st.warning("Could not retrieve the necessary play-by-play data for analysis. This can happen at the start of a season or if data is missing.")
             st.stop() # This stops the app from running further.
 
         # --- Stat Calculation ---

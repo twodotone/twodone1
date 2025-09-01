@@ -107,7 +107,8 @@ else:
             
             # The generated spread is from the home team's perspective. A positive value means home is favored.
             # We must invert it to match the standard convention (favorite is negative).
-            model_home_spread = -generate_stable_matchup_line(home_stats_std, away_stats_std)
+            model_result, model_weights = generate_stable_matchup_line(home_stats_std, away_stats_std, return_weights=True)
+            model_home_spread = -model_result
             model_away_spread = -model_home_spread
 
         st.subheader("Prediction Engine")
@@ -119,6 +120,24 @@ else:
             model_edge = home_spread_vegas - model_home_spread
             pick = home_abbr if model_edge > 0 else away_abbr
             col3.metric("Model Edge", f"{abs(model_edge):.1f} pts on {pick}")
+            
+            # Display the dynamic weights used in the model
+            st.divider()
+            st.write("#### Dynamic Offense/Defense Weights")
+            st.write("The model uses team-specific weights based on offensive and defensive strengths:")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"**{home_abbr} Weights:**")
+                st.write(f"Offense: {model_weights['home_off_weight']:.1%}")
+                st.write(f"Defense: {model_weights['home_def_weight']:.1%}")
+            
+            with col2:
+                st.write(f"**{away_abbr} Weights:**")
+                st.write(f"Offense: {model_weights['away_off_weight']:.1%}")
+                st.write(f"Defense: {model_weights['away_def_weight']:.1%}")
+            
+            st.caption("*Note: Traditional models use fixed 50/50 weights, but this model dynamically adjusts weights based on team strengths.*")
 
         # --- Recency Weighting UI & Calculation ---
         st.subheader("Model Refinements (Recency Weighting)")
@@ -139,7 +158,8 @@ else:
                 home_stats_w = calculate_weighted_stats(home_stats_std, home_stats_recent, full_season_weight, recent_form_weight)
                 
                 # We must invert it to match the standard convention (favorite is negative).
-                weighted_model_home_spread = -generate_stable_matchup_line(home_stats_w, away_stats_w)
+                weighted_result, weighted_weights = generate_stable_matchup_line(home_stats_w, away_stats_w, return_weights=True)
+                weighted_model_home_spread = -weighted_result
                 weighted_model_away_spread = -weighted_model_home_spread
 
             st.metric("Weighted Model Spread", f"{weighted_model_home_spread:+.1f}", f"{weighted_model_home_spread - model_home_spread:+.1f} vs. Standard", delta_color="off")

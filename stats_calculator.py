@@ -129,22 +129,73 @@ def calculate_weighted_stats(stats_std, stats_recent, full_season_weight, recent
             stats_w[key] = (stats_std.get(key, 0) * full_season_weight) + (stats_recent.get(key, 0) * recent_form_weight)
     return stats_w
 
-def generate_stable_matchup_line(home_stats, away_stats):
+def calculate_matchup_specific_weights(home_stats, away_stats):
     """
-    Generates a predicted line based on the granular EPA matchup engine.
-    HFA and QB Adjustments have been permanently removed from this calculation.
+    Calculate weights that reflect the specific matchup dynamics between teams.
+    This approach weights offense and defense based on relative team strengths.
     """
+    # Default EPA values if keys are missing
+    default_epa = 0.0
+    
+    # Get offensive and defensive EPA values
+    home_off_epa = max(min(home_stats.get('Off_Pass_EPA', default_epa), 0.5), -0.5)
+    home_def_epa = max(min(home_stats.get('Def_Pass_EPA', default_epa), 0.5), -0.5)
+    away_off_epa = max(min(away_stats.get('Off_Pass_EPA', default_epa), 0.5), -0.5)
+    away_def_epa = max(min(away_stats.get('Def_Pass_EPA', default_epa), 0.5), -0.5)
+    
+    # Normalize to 0-1 range (approximating percentiles)
+    # For offense, higher is better; for defense, lower (more negative) is better
+    home_off_strength = (home_off_epa + 0.5) / 1.0
+    home_def_strength = 1.0 - ((home_def_epa + 0.5) / 1.0)  # Inverse for defense
+    away_off_strength = (away_off_epa + 0.5) / 1.0
+    away_def_strength = 1.0 - ((away_def_epa + 0.5) / 1.0)  # Inverse for defense
+    
+    # Calculate relative strength of each unit in the matchup
+    home_off_vs_away_def = (home_off_strength + away_def_strength) / 2
+    away_off_vs_home_def = (away_off_strength + home_def_strength) / 2
+    
+    # Calculate weights (allowing 55-75% range for offense)
+    home_off_weight = 0.55 + (0.2 * home_off_vs_away_def)
+    home_def_weight = 1.0 - home_off_weight
+    away_off_weight = 0.55 + (0.2 * away_off_vs_home_def)
+    away_def_weight = 1.0 - away_off_weight
+    
+    return {
+        'home_off_weight': home_off_weight,
+        'home_def_weight': home_def_weight,
+        'away_off_weight': away_off_weight,
+        'away_def_weight': away_def_weight
+    }
+
+def generate_stable_matchup_line(home_stats, away_stats, return_weights=False, home_field_advantage=None):
+    """
+    Generates a predicted line based on the granular EPA matchup engine with
+    dynamic offense/defense weighting based on team strengths.
+    HFA can be optionally added for backward compatibility with the backtester.
+    """
+    # Calculate dynamic weights based on matchup
+    weights = calculate_matchup_specific_weights(home_stats, away_stats)
+    
     # Use team average passing EPA
     home_pass_offense_epa = home_stats.get('Off_Pass_EPA', 0)
     away_pass_offense_epa = away_stats.get('Off_Pass_EPA', 0)
 
-    home_rush_outcome = (home_stats.get('Off_Rush_EPA', 0) + away_stats.get('Def_Rush_EPA', 0)) / 2
-    home_pass_outcome = (home_pass_offense_epa + away_stats.get('Def_Pass_EPA', 0)) / 2
+    # Apply weights to offensive and defensive contributions
+    home_rush_outcome = (home_stats.get('Off_Rush_EPA', 0) * weights['home_off_weight'] + 
+                         away_stats.get('Def_Rush_EPA', 0) * weights['away_def_weight'])
+    
+    home_pass_outcome = (home_pass_offense_epa * weights['home_off_weight'] + 
+                         away_stats.get('Def_Pass_EPA', 0) * weights['away_def_weight'])
+    
     home_exp_outcome_per_play = (home_rush_outcome * home_stats.get('Rush_Pct', 0.5)) + \
                                 (home_pass_outcome * home_stats.get('Pass_Pct', 0.5))
 
-    away_rush_outcome = (away_stats.get('Off_Rush_EPA', 0) + home_stats.get('Def_Rush_EPA', 0)) / 2
-    away_pass_outcome = (away_pass_offense_epa + home_stats.get('Def_Pass_EPA', 0)) / 2
+    away_rush_outcome = (away_stats.get('Off_Rush_EPA', 0) * weights['away_off_weight'] + 
+                         home_stats.get('Def_Rush_EPA', 0) * weights['home_def_weight'])
+    
+    away_pass_outcome = (away_pass_offense_epa * weights['away_off_weight'] + 
+                         home_stats.get('Def_Pass_EPA', 0) * weights['home_def_weight'])
+    
     away_exp_outcome_per_play = (away_rush_outcome * away_stats.get('Rush_Pct', 0.5)) + \
                                 (away_pass_outcome * away_stats.get('Pass_Pct', 0.5))
 
@@ -153,7 +204,14 @@ def generate_stable_matchup_line(home_stats, away_stats):
 
     net_adv_per_play = home_exp_outcome_per_play - away_exp_outcome_per_play
     neutral_margin_off_def = net_adv_per_play * expected_plays
+    
+    # Add home field advantage if provided (for backward compatibility)
+    final_margin = neutral_margin_off_def
+    if home_field_advantage is not None:
+        final_margin += home_field_advantage
 
-    # The final margin IS the spread. HFA is no longer added.
-    # A positive margin means the home team is favored.
-    return neutral_margin_off_def
+    # The final margin IS the spread. A positive margin means the home team is favored.
+    if return_weights:
+        return final_margin, weights
+    else:
+        return final_margin

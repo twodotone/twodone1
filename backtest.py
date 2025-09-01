@@ -58,7 +58,7 @@ def run_backtest(year, weeks, value_threshold, recent_games_window, recent_form_
             home_stats_w = calculate_weighted_stats(home_stats_std, home_stats_recent, 1 - recent_form_weight, recent_form_weight)
             
             # Note: We are intentionally calling this without qb_adj parameters
-            model_line = generate_stable_matchup_line(home_stats_w, away_stats_w)
+            model_line, _ = generate_stable_matchup_line(home_stats_w, away_stats_w, return_weights=True)
             model_home_spread = -model_line
             
             # Calculate the Value Edge and Make a Pick

@@ -119,7 +119,24 @@ else:
             
             model_edge = home_spread_vegas - model_home_spread
             pick = home_abbr if model_edge > 0 else away_abbr
-            col3.metric("Model Edge", f"{abs(model_edge):.1f} pts on {pick}")
+            
+            # Calculate confidence rating for this edge
+            try:
+                from confidence_ratings import get_confidence_rating, get_confidence_text, get_recommendation
+                stars, win_prob, samples = get_confidence_rating(abs(model_edge), use_2025_model=True)
+                confidence_text = get_confidence_text(stars)
+                recommendation = get_recommendation(abs(model_edge), win_prob)
+                
+                # Display edge with confidence info
+                col3.metric("Model Edge", f"{abs(model_edge):.1f} pts on {pick}", 
+                           f"{confidence_text} confidence ({win_prob*100:.1f}%)")
+                
+                # Add star rating visualization and recommendation
+                st.markdown(f"**Confidence Rating:** {'★' * stars}{'☆' * (5-stars)} ({samples} historical samples)")
+                st.markdown(f"**Recommendation:** {recommendation}")
+            except ImportError:
+                # Fallback if confidence module not available
+                col3.metric("Model Edge", f"{abs(model_edge):.1f} pts on {pick}")
             
             # Display the dynamic weights used in the model
             st.divider()

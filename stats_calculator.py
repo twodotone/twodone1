@@ -1,7 +1,23 @@
 import pandas as pd
 import streamlit as st
+import sys
 
-@st.cache_data
+# Check if we're running in Streamlit or as a standalone script
+try:
+    # This will raise an exception if we're not in a Streamlit context
+    st.runtime.get_instance()
+    IN_STREAMLIT = True
+except:
+    IN_STREAMLIT = False
+
+# Create a decorator that uses st.cache_data when in Streamlit, otherwise does nothing
+def cache_wrapper(func):
+    if IN_STREAMLIT:
+        return st.cache_data(func)
+    else:
+        return func
+
+@cache_wrapper
 def get_last_n_games_pbp(full_pbp_df, team_abbr, n_games):
     """
     Extracts the play-by-play data for the last N regular season games for a given team,
@@ -20,6 +36,7 @@ def get_last_n_games_pbp(full_pbp_df, team_abbr, n_games):
     return full_pbp_df[full_pbp_df['game_id'].isin(last_n_game_ids)]
 
 #@st.cache_data
+@cache_wrapper
 def calculate_explosive_play_rates(_pbp_df):
     """
     Calculates the rate of explosive plays (runs >= 10 yards, passes >= 20 yards).
@@ -34,6 +51,7 @@ def calculate_explosive_play_rates(_pbp_df):
     return total_explosive_plays / total_plays if total_plays > 0 else 0
 
 #@st.cache_data
+@cache_wrapper
 def calculate_granular_epa_stats(_pbp_df, team_abbr, use_sos_adjustment=True):
     """
     Calculates opponent-adjusted EPA stats for Offense and Defense.
@@ -167,11 +185,15 @@ def calculate_matchup_specific_weights(home_stats, away_stats):
         'away_def_weight': away_def_weight
     }
 
-def generate_stable_matchup_line(home_stats, away_stats, return_weights=False, home_field_advantage=None):
+def generate_stable_matchup_line(home_stats, away_stats, return_weights=False, home_field_advantage=None, 
+                            pbp_df=None, home_team=None, away_team=None, game_info=None):
     """
     Generates a predicted line based on the granular EPA matchup engine with
     dynamic offense/defense weighting based on team strengths.
-    HFA can be optionally added for backward compatibility with the backtester.
+    HFA can be added in three ways:
+    1. Explicitly passed as home_field_advantage parameter (backward compatibility)
+    2. Using pbp_df, home_team, and away_team to calculate dynamic HFA
+    3. Using game_info to provide additional context for HFA calculation
     """
     # Calculate dynamic weights based on matchup
     weights = calculate_matchup_specific_weights(home_stats, away_stats)
@@ -205,13 +227,44 @@ def generate_stable_matchup_line(home_stats, away_stats, return_weights=False, h
     net_adv_per_play = home_exp_outcome_per_play - away_exp_outcome_per_play
     neutral_margin_off_def = net_adv_per_play * expected_plays
     
-    # Add home field advantage if provided (for backward compatibility)
-    final_margin = neutral_margin_off_def
+    # Calculate HFA using the most appropriate method available
+    hfa_value = 0
+    hfa_components = None
+    
+    # Option 1: Explicitly provided HFA value (highest priority, for backward compatibility)
     if home_field_advantage is not None:
-        final_margin += home_field_advantage
+        hfa_value = home_field_advantage
+    # Option 2: Calculate dynamic HFA if we have all the required inputs
+    elif pbp_df is not None and home_team is not None and away_team is not None:
+        # Dynamically import to avoid circular import
+        try:
+            from dynamic_hfa import calculate_dynamic_hfa
+            
+            # For backtesting, limit HFA range to improve performance
+            if game_info and 'hfa_range' in game_info:
+                hfa_range = game_info['hfa_range']
+                if hfa_range == 'low':
+                    hfa_value = 0.5  # Very low HFA
+                elif hfa_range == 'medium':
+                    hfa_value = 1.5  # Medium HFA
+                elif hfa_range == 'high':
+                    hfa_value = 2.5  # Higher HFA
+                else:
+                    # Calculate dynamic HFA with components for analysis
+                    hfa_value, hfa_components = calculate_dynamic_hfa(pbp_df, home_team, away_team, game_info, return_components=True)
+            else:
+                # Calculate dynamic HFA with components for analysis
+                hfa_value, hfa_components = calculate_dynamic_hfa(pbp_df, home_team, away_team, game_info, return_components=True)
+        except ImportError:
+            # Fallback if dynamic_hfa module is not available
+            from hfa_data import HFA_DATA
+            hfa_value = HFA_DATA.get(home_team, 2.0)  # Default to standard HFA
+    
+    # Add HFA to the neutral field projection
+    final_margin = neutral_margin_off_def + hfa_value
 
     # The final margin IS the spread. A positive margin means the home team is favored.
     if return_weights:
-        return final_margin, weights
+        return final_margin, weights, hfa_value, hfa_components
     else:
         return final_margin

@@ -191,6 +191,15 @@ else:
                 st.write(f"Offense: {model_weights['away_off_weight']:.1%}")
                 st.write(f"Defense: {model_weights['away_def_weight']:.1%}")
             
+            # Add information about HFA calculation
+            st.expander("Home Field Advantage (HFA) Information").write("""
+            **Dynamic HFA Calculation:**
+            - For 2025 and future seasons, HFA is calculated using data from the previous 3 seasons (2022-2024).
+            - Team-specific HFA values are based on home vs. away performance differentials.
+            - Values are constrained to a reasonable range of 0-1 points to prevent extreme outliers.
+            - Teams with insufficient data use the league average HFA.
+            """)
+            
             st.caption("*Note: Model uses team-specific weights based on offensive and defensive strengths.*")
 
         # --- Historical Backtest Display ---

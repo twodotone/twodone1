@@ -147,6 +147,110 @@ def calculate_weighted_stats(stats_std, stats_recent, full_season_weight, recent
             stats_w[key] = (stats_std.get(key, 0) * full_season_weight) + (stats_recent.get(key, 0) * recent_form_weight)
     return stats_w
 
+def calculate_tiered_historical_stats(team_abbr, pbp_df, current_year, recent_games_window=8, recent_form_weight=0.3):
+    """
+    Calculates team stats using a tiered weighting system that:
+    1. Weights different years of historical data with declining importance
+    2. Applies recency weighting to the most recent games
+    
+    Parameters:
+    -----------
+    team_abbr : str
+        The team abbreviation to calculate stats for
+    pbp_df : DataFrame
+        The combined play-by-play data across multiple years
+    current_year : int
+        The current year being analyzed
+    recent_games_window : int, optional
+        Number of recent games to apply recency weighting to
+    recent_form_weight : float, optional
+        Weight to apply to recent games (between 0 and 1)
+        
+    Returns:
+    --------
+    dict
+        Dictionary of weighted team statistics
+    """
+    if pbp_df.empty:
+        return {}
+    
+    # Filter for regular season only
+    reg_games = pbp_df[pbp_df['season_type'] == 'REG'].copy()
+    if reg_games.empty:
+        return {}
+    
+    # Get available seasons
+    available_seasons = sorted(reg_games['season'].unique(), reverse=True)
+    
+    # Setup year weights (declining importance)
+    year_weights = {}
+    base_weights = [0.7, 0.2, 0.1]  # Current year, Previous year, Two years ago
+    
+    # Assign weights to available years
+    for i, year in enumerate(available_seasons):
+        if i < len(base_weights):
+            year_weights[year] = base_weights[i]
+        else:
+            # Any additional years get minimal weight
+            year_weights[year] = 0.0
+    
+    # Normalize weights if some years are missing
+    if year_weights:
+        total_weight = sum(year_weights.values())
+        if total_weight > 0:
+            for year in year_weights:
+                year_weights[year] /= total_weight
+    
+    # Calculate full stats for each year
+    year_stats = {}
+    for year in available_seasons:
+        if year_weights.get(year, 0) > 0:
+            year_data = reg_games[reg_games['season'] == year]
+            year_stats[year] = calculate_granular_epa_stats(year_data, team_abbr)
+    
+    # Combine yearly stats with appropriate weights
+    combined_stats = {}
+    if year_stats:
+        all_keys = set()
+        for year_stat in year_stats.values():
+            all_keys.update(year_stat.keys())
+        
+        # Weight and combine stats from different years
+        for key in all_keys:
+            if key == 'plays_per_game':
+                # For plays per game, use the most recent year's value
+                most_recent_year = available_seasons[0] if available_seasons else current_year
+                combined_stats[key] = year_stats.get(most_recent_year, {}).get(key, 65)
+            else:
+                # Weight other stats by year
+                weighted_sum = 0
+                for year, weight in year_weights.items():
+                    if year in year_stats:
+                        weighted_sum += year_stats[year].get(key, 0) * weight
+                combined_stats[key] = weighted_sum
+    
+    # Apply recency weighting if we have current year data
+    if current_year in available_seasons:
+        current_year_data = reg_games[reg_games['season'] == current_year]
+        recent_games_pbp = get_last_n_games_pbp(current_year_data, team_abbr, recent_games_window)
+        
+        if not recent_games_pbp.empty:
+            recent_stats = calculate_granular_epa_stats(recent_games_pbp, team_abbr)
+            
+            # Standard weight is what remains after recent form weight
+            standard_weight = 1 - recent_form_weight
+            
+            # Combine with recency weighting
+            for key in set(combined_stats.keys()) | set(recent_stats.keys()):
+                if key == 'plays_per_game':
+                    # Don't apply recency weighting to plays per game
+                    continue
+                else:
+                    combined_stats[key] = ((combined_stats.get(key, 0) * standard_weight) + 
+                                         (recent_stats.get(key, 0) * recent_form_weight))
+    
+    return combined_stats
+
 def calculate_matchup_specific_weights(home_stats, away_stats):
     """
     Calculate weights that reflect the specific matchup dynamics between teams.

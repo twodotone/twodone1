@@ -22,30 +22,19 @@ def load_rolling_data(current_year):
     except Exception as e:
         st.error(f"Failed to load data for {current_year}. Error: {e}")
 
-    # Load previous year data (maintain backward compatibility by always loading just previous year)
-    previous_year = current_year - 1
-    previous_file_path = os.path.join("data", f"pbp_{previous_year}.parquet")
-    try:
-        pbp_previous = pd.read_parquet(previous_file_path)
-        pbp_dfs.append(pbp_previous)
-        years_loaded.append(previous_year)
-    except FileNotFoundError:
-        st.warning(f"Could not find data for the previous season ({previous_year}). Predictions will be based on current season data only.")
-    except Exception as e:
-        st.error(f"Failed to load data for {previous_year}. Error: {e}")
-        
-    # For HFA calculation, we also need data from older seasons
-    # But this data is NOT used for team stats calculation
-    hfa_years = []
-    for i in range(2, 4):  # Look back 2-3 years (years 2 and 3)
-        older_year = current_year - i
-        older_file_path = os.path.join("data", f"pbp_{older_year}.parquet")
+    # Load data from up to 3 previous years
+    # This ensures we have enough historical data for both stats and HFA calculation
+    for i in range(1, 4):  # Look back up to 3 years
+        previous_year = current_year - i
+        previous_file_path = os.path.join("data", f"pbp_{previous_year}.parquet")
         try:
-            # Check if the file exists, but don't load it here
-            if os.path.exists(older_file_path):
-                hfa_years.append(older_year)
+            pbp_previous = pd.read_parquet(previous_file_path)
+            pbp_dfs.append(pbp_previous)
+            years_loaded.append(previous_year)
+        except FileNotFoundError:
+            st.info(f"No data file found for season {previous_year}.")
         except Exception as e:
-            st.error(f"Error checking data for {older_year}. Error: {e}")
+            st.error(f"Failed to load data for {previous_year}. Error: {e}")
 
     if not pbp_dfs:
         st.error("No play-by-play data could be loaded. The application cannot proceed.")
@@ -57,9 +46,7 @@ def load_rolling_data(current_year):
     combined_df = combined_df.sort_values(by=['season', 'week', 'game_id']).reset_index(drop=True)
     
     # Show what years were loaded
-    st.info(f"Loaded stats data for seasons: {', '.join(map(str, sorted(years_loaded)))}")
-    if hfa_years:
-        st.info(f"Additional HFA historical data available for: {', '.join(map(str, sorted(hfa_years)))}")
+    st.info(f"Loaded data for seasons: {', '.join(map(str, sorted(years_loaded)))}")
     
     return combined_df
 

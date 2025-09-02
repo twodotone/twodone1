@@ -102,22 +102,31 @@ else:
 
         # --- Stat Calculation ---
         with st.spinner('Calculating team stats...'):
-            # Standard full-season stats (will be used as base)
-            away_stats_std = calculate_granular_epa_stats(pbp_data_for_stats, away_abbr, use_sos_adjustment)
-            home_stats_std = calculate_granular_epa_stats(pbp_data_for_stats, home_abbr, use_sos_adjustment)
-            
-            # Get recent games data (using optimal 8-game window)
+            # Using our new tiered historical weighting system with recency boost
             recent_games_window = 8
-            pbp_away_recent = get_last_n_games_pbp(pbp_data_for_stats, away_abbr, recent_games_window)
-            pbp_home_recent = get_last_n_games_pbp(pbp_data_for_stats, home_abbr, recent_games_window)
-            away_stats_recent = calculate_granular_epa_stats(pbp_away_recent, away_abbr, use_sos_adjustment)
-            home_stats_recent = calculate_granular_epa_stats(pbp_home_recent, home_abbr, use_sos_adjustment)
-            
-            # Apply optimal recency weighting (30%)
             recent_form_weight = 0.30
-            full_season_weight = 1 - recent_form_weight
-            away_stats_w = calculate_weighted_stats(away_stats_std, away_stats_recent, full_season_weight, recent_form_weight)
-            home_stats_w = calculate_weighted_stats(home_stats_std, home_stats_recent, full_season_weight, recent_form_weight)
+            
+            # Calculate stats with tiered historical weighting
+            from stats_calculator import calculate_tiered_historical_stats
+            
+            # Apply our new tiered weighting system that incorporates:
+            # 1. Year-based weighting (70% current year, 20% previous year, 10% two years ago)
+            # 2. 30% recency weighting on last 8 games
+            away_stats_w = calculate_tiered_historical_stats(
+                away_abbr, 
+                pbp_data_for_stats, 
+                CURRENT_YEAR,
+                recent_games_window, 
+                recent_form_weight
+            )
+            
+            home_stats_w = calculate_tiered_historical_stats(
+                home_abbr, 
+                pbp_data_for_stats, 
+                CURRENT_YEAR,
+                recent_games_window, 
+                recent_form_weight
+            )
             
             # The generated spread is from the home team's perspective. A positive value means home is favored.
             # We must invert it to match the standard convention (favorite is negative).
@@ -206,14 +215,21 @@ else:
                 st.write(f"Offense: {model_weights['away_off_weight']:.1%}")
                 st.write(f"Defense: {model_weights['away_def_weight']:.1%}")
             
-            # Add information about HFA calculation
-            st.expander("Home Field Advantage (HFA) Information").write("""
-            **Dynamic HFA Calculation:**
-            - For 2025 and future seasons, HFA is calculated using data from the previous 3 seasons (2022-2024).
-            - Team-specific HFA values are based on home vs. away performance differentials.
-            - Values are constrained to a reasonable range of 0-1 points to prevent extreme outliers.
-            - Teams with insufficient data use the league average HFA.
-            """)
+            # Add information about HFA calculation and historical weighting
+            with st.expander("Advanced Model Information"):
+                st.write("""
+                **Multi-Year Historical Weighting:**
+                - Current year (2025): 70% weight
+                - Previous year (2024): 20% weight 
+                - Two years ago (2023): 10% weight
+                - Additional 30% recency weight on last 8 games
+                
+                **Dynamic HFA Calculation:**
+                - Team-specific HFA based on home vs. away performance differentials
+                - Uses data from 2022-2024 for 2025 season predictions
+                - Values constrained to 0-1 points based on optimization testing
+                - Accounts for team-specific home field advantages
+                """)
             
             st.caption("*Note: Model uses team-specific weights based on offensive and defensive strengths.*")
 

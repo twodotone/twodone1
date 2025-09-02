@@ -3,6 +3,7 @@
 import streamlit as st
 import pandas as pd
 import nfl_data_py as nfl
+import os
 from data_loader import load_rolling_data
 from stats_calculator import (
     get_last_n_games_pbp,
@@ -122,6 +123,20 @@ else:
             # We must invert it to match the standard convention (favorite is negative).
             # Pass current season info for proper HFA calculation
             game_info = {'current_season': CURRENT_YEAR}
+            
+            # For 2025 or later seasons, we'll need to load older seasons for HFA calculation
+            if CURRENT_YEAR >= 2025:
+                # Load historical data for HFA calculation only (not for team stats)
+                hfa_years = []
+                for i in range(2, 4):  # Look back to seasons 2-3 years ago (e.g., 2022-2023 for 2025)
+                    old_year = CURRENT_YEAR - i
+                    old_file_path = os.path.join("data", f"pbp_{old_year}.parquet")
+                    if os.path.exists(old_file_path):
+                        hfa_years.append(old_year)
+                
+                if hfa_years:
+                    game_info['historical_seasons'] = hfa_years
+            
             model_result, model_weights, hfa_value, hfa_components = generate_stable_matchup_line(
                 home_stats_w, away_stats_w, return_weights=True, 
                 pbp_df=pbp_data_for_stats, home_team=home_abbr, away_team=away_abbr, game_info=game_info

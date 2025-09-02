@@ -71,18 +71,25 @@ def calculate_dynamic_hfa(pbp_df, home_team, away_team, game_info=None, return_c
         # Filter for regular season games only
         reg_games = pbp_df[pbp_df['season_type'] == 'REG']
         
-        # For 2025+, make sure we're using the most recent 2-3 years of data if current year data is limited
+    # For 2025+, make sure we're using the most recent 2-3 years of data if current year data is limited
         if historical_data_needed:
-            # Try to get data from 2022-2024 if we're analyzing 2025
-            prev_seasons = []
-            for year in range(current_season-3, current_season):
-                if year in reg_games['season'].unique():
-                    prev_seasons.append(year)
-            
-            if prev_seasons:
+            # Check if specific historical seasons were provided
+            if game_info and 'historical_seasons' in game_info:
+                prev_seasons = game_info['historical_seasons']
                 components['seasons_used'] = prev_seasons
-                # Use the most recent 3 years of data
+                # Use the specified historical seasons
                 reg_games = reg_games[reg_games['season'].isin(prev_seasons)]
+            else:
+                # Try to get data from 2022-2024 if we're analyzing 2025
+                prev_seasons = []
+                for year in range(current_season-3, current_season):
+                    if year in reg_games['season'].unique():
+                        prev_seasons.append(year)
+                
+                if prev_seasons:
+                    components['seasons_used'] = prev_seasons
+                    # Use the most recent 3 years of data
+                    reg_games = reg_games[reg_games['season'].isin(prev_seasons)]
             
         # Get home team's performance at home vs away
         home_team_games = reg_games[(reg_games['home_team'] == home_team) | (reg_games['away_team'] == home_team)]

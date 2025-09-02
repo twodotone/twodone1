@@ -184,7 +184,7 @@ def calculate_tiered_historical_stats(team_abbr, pbp_df, current_year, recent_ga
     
     # Setup year weights (declining importance)
     year_weights = {}
-    base_weights = [0.7, 0.2, 0.1]  # Current year, Previous year, Two years ago
+    base_weights = [0.5, 0.3, 0.2]  # Current year (50%), Previous year (30%), Two years ago (20%)
     
     # Assign weights to available years
     for i, year in enumerate(available_seasons):

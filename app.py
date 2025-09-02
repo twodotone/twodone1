@@ -219,10 +219,15 @@ else:
             with st.expander("Advanced Model Information"):
                 st.write("""
                 **Multi-Year Historical Weighting:**
-                - Current year (2025): 70% weight
-                - Previous year (2024): 20% weight 
-                - Two years ago (2023): 10% weight
+                - Current year (2025): 50% weight
+                - Previous year (2024): 30% weight 
+                - Two years ago (2023): 20% weight
                 - Additional 30% recency weight on last 8 games
+                
+                **Effective Weights After Recency Adjustment:**
+                - 2025/Current season: 35% base + 30% recency = 65% total
+                - 2024: 21% 
+                - 2023: 14%
                 
                 **Dynamic HFA Calculation:**
                 - Team-specific HFA based on home vs. away performance differentials

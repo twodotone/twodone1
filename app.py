@@ -101,13 +101,31 @@ else:
 
         # --- Stat Calculation ---
         with st.spinner('Calculating team stats...'):
+            # Standard full-season stats (will be used as base)
             away_stats_std = calculate_granular_epa_stats(pbp_data_for_stats, away_abbr, use_sos_adjustment)
             home_stats_std = calculate_granular_epa_stats(pbp_data_for_stats, home_abbr, use_sos_adjustment)
-
+            
+            # Get recent games data (using optimal 8-game window)
+            recent_games_window = 8
+            pbp_away_recent = get_last_n_games_pbp(pbp_data_for_stats, away_abbr, recent_games_window)
+            pbp_home_recent = get_last_n_games_pbp(pbp_data_for_stats, home_abbr, recent_games_window)
+            away_stats_recent = calculate_granular_epa_stats(pbp_away_recent, away_abbr, use_sos_adjustment)
+            home_stats_recent = calculate_granular_epa_stats(pbp_home_recent, home_abbr, use_sos_adjustment)
+            
+            # Apply optimal recency weighting (30%)
+            recent_form_weight = 0.30
+            full_season_weight = 1 - recent_form_weight
+            away_stats_w = calculate_weighted_stats(away_stats_std, away_stats_recent, full_season_weight, recent_form_weight)
+            home_stats_w = calculate_weighted_stats(home_stats_std, home_stats_recent, full_season_weight, recent_form_weight)
             
             # The generated spread is from the home team's perspective. A positive value means home is favored.
             # We must invert it to match the standard convention (favorite is negative).
-            model_result, model_weights = generate_stable_matchup_line(home_stats_std, away_stats_std, return_weights=True)
+            # Pass current season info for proper HFA calculation
+            game_info = {'current_season': CURRENT_YEAR}
+            model_result, model_weights, hfa_value, hfa_components = generate_stable_matchup_line(
+                home_stats_w, away_stats_w, return_weights=True, 
+                pbp_df=pbp_data_for_stats, home_team=home_abbr, away_team=away_abbr, game_info=game_info
+            )
             model_home_spread = -model_result
             model_away_spread = -model_home_spread
 
@@ -131,17 +149,36 @@ else:
                 col3.metric("Model Edge", f"{abs(model_edge):.1f} pts on {pick}", 
                            f"{confidence_text} confidence ({win_prob*100:.1f}%)")
                 
-                # Add star rating visualization and recommendation
-                st.markdown(f"**Confidence Rating:** {'★' * stars}{'☆' * (5-stars)} ({samples} historical samples)")
-                st.markdown(f"**Recommendation:** {recommendation}")
+                # Create a visually prominent confidence indicator
+                st.divider()
+                confidence_color = {
+                    1: "#ff6b6b",  # Red for very low confidence
+                    2: "#ffa26b",  # Orange for low confidence
+                    3: "#ffd56b",  # Yellow for moderate confidence
+                    4: "#7bed9f",  # Light green for high confidence
+                    5: "#2ed573"   # Dark green for very high confidence
+                }
+                
+                st.markdown(
+                    f"""
+                    <div style="background-color: {confidence_color[stars]}; padding: 10px; border-radius: 10px; margin-bottom: 15px;">
+                        <h3 style="text-align: center; margin: 0; color: black;">Confidence Rating: {"★" * stars}{"☆" * (5-stars)}</h3>
+                        <h4 style="text-align: center; margin: 5px 0; color: black;">{confidence_text.upper()} CONFIDENCE ({win_prob*100:.1f}%)</h4>
+                        <p style="text-align: center; margin: 0; font-weight: bold; color: black;">{recommendation}</p>
+                        <p style="text-align: center; margin: 0; font-size: 0.8em; color: black;">Based on {samples} historical samples</p>
+                    </div>
+                    """, 
+                    unsafe_allow_html=True
+                )
             except ImportError:
                 # Fallback if confidence module not available
                 col3.metric("Model Edge", f"{abs(model_edge):.1f} pts on {pick}")
             
             # Display the dynamic weights used in the model
             st.divider()
-            st.write("#### Dynamic Offense/Defense Weights")
-            st.write("The model uses team-specific weights based on offensive and defensive strengths:")
+            st.write("#### Model Parameters")
+            st.write(f"• **Recency Weighting**: 30% weight on last 8 games")
+            st.write(f"• **Home Field Advantage**: {hfa_value:.2f} points (dynamic team-specific)")
             
             col1, col2 = st.columns(2)
             with col1:
@@ -154,32 +191,7 @@ else:
                 st.write(f"Offense: {model_weights['away_off_weight']:.1%}")
                 st.write(f"Defense: {model_weights['away_def_weight']:.1%}")
             
-            st.caption("*Note: Traditional models use fixed 50/50 weights, but this model dynamically adjusts weights based on team strengths.*")
-
-        # --- Recency Weighting UI & Calculation ---
-        st.subheader("Model Refinements (Recency Weighting)")
-        with st.container(border=True):
-            col1, col2 = st.columns(2)
-            recent_games_window = col1.slider('Recent Games Window', 4, 12, 8, 1, help="Adjust the lookback window for 'recent form'.")
-            recent_form_weight_pct = col2.slider('Recent Form Weight (%)', 0, 50, 20, 5, help="Adjust how much to weight recent form vs. full-season data.")
-            recent_form_weight = recent_form_weight_pct / 100.0
-            full_season_weight = 1 - recent_form_weight
-
-            with st.spinner('Calculating weighted model...'):
-                pbp_away_recent = get_last_n_games_pbp(pbp_data_for_stats, away_abbr, recent_games_window)
-                pbp_home_recent = get_last_n_games_pbp(pbp_data_for_stats, home_abbr, recent_games_window)
-                away_stats_recent = calculate_granular_epa_stats(pbp_away_recent, away_abbr, use_sos_adjustment)
-                home_stats_recent = calculate_granular_epa_stats(pbp_home_recent, home_abbr, use_sos_adjustment)
-
-                away_stats_w = calculate_weighted_stats(away_stats_std, away_stats_recent, full_season_weight, recent_form_weight)
-                home_stats_w = calculate_weighted_stats(home_stats_std, home_stats_recent, full_season_weight, recent_form_weight)
-                
-                # We must invert it to match the standard convention (favorite is negative).
-                weighted_result, weighted_weights = generate_stable_matchup_line(home_stats_w, away_stats_w, return_weights=True)
-                weighted_model_home_spread = -weighted_result
-                weighted_model_away_spread = -weighted_model_home_spread
-
-            st.metric("Weighted Model Spread", f"{weighted_model_home_spread:+.1f}", f"{weighted_model_home_spread - model_home_spread:+.1f} vs. Standard", delta_color="off")
+            st.caption("*Note: Model uses team-specific weights based on offensive and defensive strengths.*")
 
         # --- Historical Backtest Display ---
         if CURRENT_YEAR < 2025:
@@ -188,9 +200,9 @@ else:
                 col1, col2, col3, col4 = st.columns(4)
                 
                 col1.metric("Vegas Line (Home)", f"{home_spread_vegas:+.1f}")
-                col2.metric("Model's Line (Home)", f"{weighted_model_home_spread:+.1f}")
+                col2.metric("Model's Line (Home)", f"{model_home_spread:+.1f}")
                 
-                model_edge = home_spread_vegas - weighted_model_home_spread
+                model_edge = home_spread_vegas - model_home_spread
                 pick = home_abbr if model_edge > 0 else away_abbr
                 col3.metric("Model Edge", f"{abs(model_edge):.1f} pts on {pick}")
 

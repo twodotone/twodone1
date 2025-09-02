@@ -1,4 +1,5 @@
 import pandas as pd
+import numpy as np
 from hfa_data import HFA_DATA
 
 def calculate_dynamic_hfa(pbp_df, home_team, away_team, game_info=None, return_components=False):
@@ -21,6 +22,7 @@ def calculate_dynamic_hfa(pbp_df, home_team, away_team, game_info=None, return_c
         - is_primetime: bool
         - travel_distance: float (in miles)
         - day_of_week: str
+        - current_season: int (e.g., 2025)
     return_components : bool, optional
         If True, return a dictionary of the HFA components for analysis
     
@@ -46,14 +48,42 @@ def calculate_dynamic_hfa(pbp_df, home_team, away_team, game_info=None, return_c
         'home_epa_diff': 0,
         'is_primetime': False,
         'travel_distance': 0,
-        'day_of_week': None
+        'day_of_week': None,
+        'seasons_used': []
     }
     
-    # Calculate recent home/away performance differential (last 16 games)
+    # Check if we're in a new season (2025+) with little or no data
+    current_season = None
+    if game_info and 'current_season' in game_info:
+        current_season = game_info.get('current_season')
+    elif not pbp_df.empty and 'season' in pbp_df.columns:
+        current_season = pbp_df['season'].max()
+    
+    # If we're in 2025 or later, explicitly load data from previous years if needed
+    historical_data_needed = False
+    if current_season and current_season >= 2025:
+        # Check if we have enough data from the current season
+        if pbp_df.empty or pbp_df[pbp_df['season'] == current_season].shape[0] < 100:
+            historical_data_needed = True
+    
+    # Calculate recent home/away performance differential
     if not pbp_df.empty:
         # Filter for regular season games only
         reg_games = pbp_df[pbp_df['season_type'] == 'REG']
         
+        # For 2025+, make sure we're using the most recent 2-3 years of data if current year data is limited
+        if historical_data_needed:
+            # Try to get data from 2022-2024 if we're analyzing 2025
+            prev_seasons = []
+            for year in range(current_season-3, current_season):
+                if year in reg_games['season'].unique():
+                    prev_seasons.append(year)
+            
+            if prev_seasons:
+                components['seasons_used'] = prev_seasons
+                # Use the most recent 3 years of data
+                reg_games = reg_games[reg_games['season'].isin(prev_seasons)]
+            
         # Get home team's performance at home vs away
         home_team_games = reg_games[(reg_games['home_team'] == home_team) | (reg_games['away_team'] == home_team)]
         if not home_team_games.empty:
@@ -77,6 +107,12 @@ def calculate_dynamic_hfa(pbp_df, home_team, away_team, game_info=None, return_c
                 components['home_epa_diff'] = home_away_diff
                 # Scale to a reasonable factor between 0.8 and 1.2
                 recent_performance_factor = 1.0 + (min(max(home_away_diff, -0.2), 0.2))
+        else:
+            # If we don't have any data for this team, fallback to base HFA
+            if historical_data_needed:
+                # Use a slightly higher factor for teams with no historical data
+                recent_performance_factor = 1.0
+                components['note'] = "No historical data found for team, using base HFA"
     
     # Apply primetime and travel adjustments if game info is provided
     if game_info:
@@ -118,6 +154,11 @@ def calculate_dynamic_hfa(pbp_df, home_team, away_team, game_info=None, return_c
     
     # Calculate dynamic HFA with all factors
     dynamic_hfa = base_hfa * recent_performance_factor * primetime_factor * travel_factor
+    
+    # For teams with no historical data in early 2025, ensure a minimum reasonable HFA
+    if historical_data_needed and dynamic_hfa < 0.3:
+        dynamic_hfa = 0.3
+        components['note'] = "Using minimum HFA value due to limited data"
     
     # Cap the HFA to stay within our optimal range (0-1 points)
     dynamic_hfa = min(max(dynamic_hfa, 0.0), 1.0)

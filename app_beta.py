@@ -112,161 +112,162 @@ with tab1:
             st.warning("Could not retrieve the necessary play-by-play data for analysis. This can happen at the start of a season or if data is missing.")
             st.stop() # This stops the app from running further.
 
-        # --- Stat Calculation ---
-        with st.spinner('Calculating team stats...'):
-            # Using our new tiered historical weighting system with recency boost
-            recent_games_window = 8
-            recent_form_weight = 0.30
+    # --- Stat Calculation ---
+    with st.spinner('Calculating team stats...'):
+        # Using our new tiered historical weighting system with recency boost
+        recent_games_window = 8
+        recent_form_weight = 0.30
+        
+        # Calculate stats with tiered historical weighting
+        away_stats_w = calculate_tiered_historical_stats(
+            away_abbr, 
+            pbp_data_for_stats, 
+            CURRENT_YEAR,
+            recent_games_window, 
+            recent_form_weight
+        )
+        
+        home_stats_w = calculate_tiered_historical_stats(
+            home_abbr, 
+            pbp_data_for_stats, 
+            CURRENT_YEAR,
+            recent_games_window, 
+            recent_form_weight
+        )
+        
+        # The generated spread is from the home team's perspective. A positive value means home is favored.
+        # We must invert it to match the standard convention (favorite is negative).
+        # Pass current season info for proper HFA calculation
+        game_info = {'current_season': CURRENT_YEAR}
             
-            # Calculate stats with tiered historical weighting
-            away_stats_w = calculate_tiered_historical_stats(
-                away_abbr, 
-                pbp_data_for_stats, 
-                CURRENT_YEAR,
-                recent_games_window, 
-                recent_form_weight
-            )
+        # For 2025 or later seasons, we'll need to load older seasons for HFA calculation
+        if CURRENT_YEAR >= 2025:
+            # Load historical data for HFA calculation only (not for team stats)
+            hfa_years = []
+            for i in range(2, 4):  # Look back to seasons 2-3 years ago (e.g., 2022-2023 for 2025)
+                old_year = CURRENT_YEAR - i
+                old_file_path = os.path.join("data", f"pbp_{old_year}.parquet")
+                if os.path.exists(old_file_path):
+                    hfa_years.append(old_year)
             
-            home_stats_w = calculate_tiered_historical_stats(
-                home_abbr, 
-                pbp_data_for_stats, 
-                CURRENT_YEAR,
-                recent_games_window, 
-                recent_form_weight
-            )
+            if hfa_years:
+                game_info['historical_seasons'] = hfa_years
+        
+        model_result, model_weights, hfa_value, hfa_components = generate_stable_matchup_line(
+            home_stats_w, away_stats_w, 
+            home_team=home_abbr, 
+            away_team=away_abbr, 
+            pbp_df=pbp_data_for_stats, 
+            return_weights=True,
+            game_info=game_info
+        )
             
-            # The generated spread is from the home team's perspective. A positive value means home is favored.
-            # We must invert it to match the standard convention (favorite is negative).
-            # Pass current season info for proper HFA calculation
-            game_info = {'current_season': CURRENT_YEAR}
-            
-            # For 2025 or later seasons, we'll need to load older seasons for HFA calculation
-            if CURRENT_YEAR >= 2025:
-                # Load historical data for HFA calculation only (not for team stats)
-                hfa_years = []
-                for i in range(2, 4):  # Look back to seasons 2-3 years ago (e.g., 2022-2023 for 2025)
-                    old_year = CURRENT_YEAR - i
-                    old_file_path = os.path.join("data", f"pbp_{old_year}.parquet")
-                    if os.path.exists(old_file_path):
-                        hfa_years.append(old_year)
-                
-                if hfa_years:
-                    game_info['historical_seasons'] = hfa_years
-            
-            model_result, model_weights, hfa_value, hfa_components = generate_stable_matchup_line(
-                home_stats_w, away_stats_w, 
-                home_abbr, away_abbr, 
-                pbp_df=pbp_data_for_stats, 
-                home_team=home_abbr, 
-                away_team=away_abbr, 
-                return_weights=True,
-                game_info=game_info
-            )
-            
-            # Convert to the conventional spread format (negative means favorite)
-            model_home_spread = round(-1 * model_result, 1)
-            
-            # Match spread format with Vegas (negative means home team is favored)
-            # This is already correct if we're using 'home_spread_vegas' as defined above
+        # Convert to the conventional spread format (negative means favorite)
+        model_home_spread = round(-1 * model_result, 1)
+        
+        # Match spread format with Vegas (negative means home team is favored)
+        # This is already correct if we're using 'home_spread_vegas' as defined above
 
-            # Use the better team as the pick (comparing model to Vegas line)
-            model_edge = home_spread_vegas - model_home_spread
-            pick = home_abbr if model_edge > 0 else away_abbr
-            pick_name = home_name if pick == home_abbr else away_name
+        # Use the better team as the pick (comparing model to Vegas line)
+        model_edge = home_spread_vegas - model_home_spread
+        pick = home_abbr if model_edge > 0 else away_abbr
+        pick_name = home_name if pick == home_abbr else away_name
             
-            # Create a container for the main prediction
-            with st.container(border=True):
-                col1, col2, col3 = st.columns(3)
-                
-                col1.metric("Vegas Line", f"{home_spread_vegas:+.1f}")
-                col2.metric("Model Prediction", f"{model_home_spread:+.1f}")
-                
-                edge_value = abs(model_edge)
-                col3.metric("Model Edge", f"{edge_value:.1f} pts on {pick}")
+        # Create a container for the main prediction
+        with st.container(border=True):
+            col1, col2, col3 = st.columns(3)
             
-            # Display confidence rating
-            try:
-                from confidence_ratings import get_confidence_rating
-                
-                # Get confidence rating based on model edge
-                stars, confidence_text, win_prob, recommendation, samples = get_confidence_rating(edge_value)
-                
-                st.subheader(f"Standard Model: {pick_name} {recommendation} with "
-                           f"{confidence_text} confidence ({win_prob*100:.1f}%)")
-                
-                # Create a visually prominent confidence indicator
-                st.divider()
-                confidence_color = {
-                    1: "#ff6b6b",  # Red for very low confidence
-                    2: "#ffa26b",  # Orange for low confidence
-                    3: "#ffd56b",  # Yellow for moderate confidence
-                    4: "#7bed9f",  # Light green for high confidence
-                    5: "#2ed573"   # Dark green for very high confidence
-                }
-                
-                st.markdown(
-                    f"""
-                    <div style="background-color: {confidence_color[stars]}; padding: 10px; border-radius: 10px; margin-bottom: 15px;">
-                        <h3 style="text-align: center; margin: 0; color: black;">Confidence Rating: {"★" * stars}{"☆" * (5-stars)}</h3>
-                        <h4 style="text-align: center; margin: 5px 0; color: black;">{confidence_text.upper()} CONFIDENCE ({win_prob*100:.1f}%)</h4>
-                        <p style="text-align: center; margin: 0; font-weight: bold; color: black;">{recommendation}</p>
-                        <p style="text-align: center; margin: 0; font-size: 0.8em; color: black;">Based on {samples} historical samples</p>
-                    </div>
-                    """, 
-                    unsafe_allow_html=True
-                )
-            except ImportError:
-                # Fallback if confidence module not available
-                col3.metric("Model Edge", f"{abs(model_edge):.1f} pts on {pick}")
+            col1.metric("Vegas Line", f"{home_spread_vegas:+.1f}")
+            col2.metric("Model Prediction", f"{model_home_spread:+.1f}")
             
-            # Display the dynamic weights used in the model
+            edge_value = abs(model_edge)
+            col3.metric("Model Edge", f"{edge_value:.1f} pts on {pick}")
+        
+        # Display confidence rating
+        try:
+            from confidence_ratings import get_confidence_rating, get_confidence_text, get_recommendation
+            
+            # Get confidence rating based on model edge
+            stars, win_prob, samples = get_confidence_rating(edge_value)
+            confidence_text = get_confidence_text(stars)
+            recommendation = get_recommendation(edge_value, win_prob)
+            
+            st.subheader(f"Standard Model: {pick_name} {recommendation} with "
+                       f"{confidence_text} confidence ({win_prob*100:.1f}%)")
+                
+            # Create a visually prominent confidence indicator
             st.divider()
-            st.write("#### Model Parameters")
-            st.write(f"• **Recency Weighting**: 30% weight on last 8 games")
-            st.write(f"• **Home Field Advantage**: {hfa_value:.2f} points (dynamic team-specific)")
+            confidence_color = {
+                1: "#ff6b6b",  # Red for very low confidence
+                2: "#ffa26b",  # Orange for low confidence
+                3: "#ffd56b",  # Yellow for moderate confidence
+                4: "#7bed9f",  # Light green for high confidence
+                5: "#2ed573"   # Dark green for very high confidence
+            }
             
-            col1, col2 = st.columns(2)
-            with col1:
-                st.write(f"**{home_abbr} Weights:**")
-                st.write(f"Offense: {model_weights['home_off_weight']:.1%}")
-                st.write(f"Defense: {model_weights['home_def_weight']:.1%}")
+            st.markdown(
+                f"""
+                <div style="background-color: {confidence_color[stars]}; padding: 10px; border-radius: 10px; margin-bottom: 15px;">
+                    <h3 style="text-align: center; margin: 0; color: black;">Confidence Rating: {"★" * stars}{"☆" * (5-stars)}</h3>
+                    <h4 style="text-align: center; margin: 5px 0; color: black;">{confidence_text.upper()} CONFIDENCE ({win_prob*100:.1f}%)</h4>
+                    <p style="text-align: center; margin: 0; font-weight: bold; color: black;">{recommendation}</p>
+                    <p style="text-align: center; margin: 0; font-size: 0.8em; color: black;">Based on {samples} historical samples</p>
+                </div>
+                """, 
+                unsafe_allow_html=True
+            )
+        except ImportError:
+            # Fallback if confidence module not available
+            col3.metric("Model Edge", f"{abs(model_edge):.1f} pts on {pick}")
             
-            with col2:
-                st.write(f"**{away_abbr} Weights:**")
-                st.write(f"Offense: {model_weights['away_off_weight']:.1%}")
-                st.write(f"Defense: {model_weights['away_def_weight']:.1%}")
+        # Display the dynamic weights used in the model
+        st.divider()
+        st.write("#### Model Parameters")
+        st.write(f"• **Recency Weighting**: 30% weight on last 8 games")
+        st.write(f"• **Home Field Advantage**: {hfa_value:.2f} points (dynamic team-specific)")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.write(f"**{home_abbr} Weights:**")
+            st.write(f"Offense: {model_weights['home_off_weight']:.1%}")
+            st.write(f"Defense: {model_weights['home_def_weight']:.1%}")
+        
+        with col2:
+            st.write(f"**{away_abbr} Weights:**")
+            st.write(f"Offense: {model_weights['away_off_weight']:.1%}")
+            st.write(f"Defense: {model_weights['away_def_weight']:.1%}")
+        
+        # Add information about HFA calculation and historical weighting
+        with st.expander("Advanced Model Information"):
+            st.write("""
+            **Multi-Year Historical Weighting:**
+            - Current year (2025): 50% weight
+            - Previous year (2024): 30% weight 
+            - Two years ago (2023): 20% weight
+            - Additional 30% recency weight on last 8 games
             
-            # Add information about HFA calculation and historical weighting
-            with st.expander("Advanced Model Information"):
-                st.write("""
-                **Multi-Year Historical Weighting:**
-                - Current year (2025): 50% weight
-                - Previous year (2024): 30% weight 
-                - Two years ago (2023): 20% weight
-                - Additional 30% recency weight on last 8 games
-                
-                **Effective Weights After Recency Adjustment:**
-                - 2025/Current season: 35% base + 30% recency = 65% total
-                - 2024: 21% 
-                - 2023: 14%
-                
-                **Dynamic HFA Calculation:**
-                - Team-specific HFA based on home vs. away performance differentials
-                - Uses data from 2022-2024 for 2025 season predictions
-                - Values constrained to 0-1 points based on optimization testing
-                - Accounts for team-specific home field advantages
-                """)
+            **Effective Weights After Recency Adjustment:**
+            - 2025/Current season: 35% base + 30% recency = 65% total
+            - 2024: 21% 
+            - 2023: 14%
             
-            st.caption("*Note: Model uses team-specific weights based on offensive and defensive strengths.*")
+            **Dynamic HFA Calculation:**
+            - Team-specific HFA based on home vs. away performance differentials
+            - Uses data from 2022-2024 for 2025 season predictions
+            - Values constrained to 0-1 points based on optimization testing
+            - Accounts for team-specific home field advantages
+            """)
             
-            # Add enhanced variance model if enabled
-            if show_variance_model:
-                st.divider()
-                add_enhanced_confidence_to_streamlit(
-                    home_abbr, away_abbr, 
-                    model_home_spread, home_spread_vegas, 
-                    pbp_data_for_stats, CURRENT_YEAR
-                )
+        st.caption("*Note: Model uses team-specific weights based on offensive and defensive strengths.*")
+        
+        # Add enhanced variance model if enabled
+        if show_variance_model:
+            st.divider()
+            add_enhanced_confidence_to_streamlit(
+                home_abbr, away_abbr, 
+                model_home_spread, home_spread_vegas, 
+                pbp_data_for_stats, CURRENT_YEAR
+            )
 
 with tab2:
     st.header("About the Model")

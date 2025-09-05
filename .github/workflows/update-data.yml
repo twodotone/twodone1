@@ -1,0 +1,83 @@
+name: Update NFL Data
+
+on:
+  schedule:
+    # Daily at 6 AM EST for betting lines
+    - cron: '0 11 * * *'
+    # Tuesday at 8 AM EST for 2025 season stats (after MNF)
+    - cron: '0 13 * * 2'
+  workflow_dispatch: # Allow manual triggering
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+        
+    - name: Install dependencies
+      run: |
+        pip install -r requirements_streamlit.txt
+        
+    - name: Determine update type
+      id: update_type
+      run: |
+        if [[ $(date +%u) -eq 2 ]]; then
+          echo "update_type=full" >> $GITHUB_OUTPUT
+          echo "Running full update (Tuesday - includes 2025 season stats)"
+        else
+          echo "update_type=lines" >> $GITHUB_OUTPUT
+          echo "Running lines-only update (daily betting lines)"
+        fi
+        
+    - name: Update NFL data (Full - Tuesdays)
+      if: steps.update_type.outputs.update_type == 'full'
+      run: |
+        python update_data_for_streamlit.py --update-2025-stats
+        echo "Updated 2025 season stats and betting lines"
+        
+    - name: Update NFL data (Lines Only - Daily)
+      if: steps.update_type.outputs.update_type == 'lines'
+      run: |
+        python update_data_for_streamlit.py --lines-only
+        echo "Updated betting lines only"
+        
+    - name: Check for changes
+      id: changes
+      run: |
+        git diff --quiet data/ || echo "changes=true" >> $GITHUB_OUTPUT
+        
+    - name: Commit and push changes
+      if: steps.changes.outputs.changes == 'true'
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add data/
+        if [[ "${{ steps.update_type.outputs.update_type }}" == "full" ]]; then
+          git commit -m "Update NFL data: 2025 season stats and betting lines ($(date +%Y-%m-%d))"
+        else
+          git commit -m "Update NFL betting lines ($(date +%Y-%m-%d))"
+        fi
+        git push
+        
+    - name: Create update log
+      if: steps.changes.outputs.changes == 'true'
+      run: |
+        echo "{
+          \"last_update\": \"$(date -u +%Y-%m-%dT%H:%M:%SZ)\",
+          \"update_type\": \"${{ steps.update_type.outputs.update_type }}\",
+          \"files_updated\": [
+            $(find data/ -name "*.parquet" -newer data/update_log.json 2>/dev/null | sed 's/.*/"&"/' | paste -sd,)
+          ]
+        }" > data/update_log.json
+        git add data/update_log.json
+        git commit -m "Update data log ($(date +%Y-%m-%d))" || true
+        git push || true

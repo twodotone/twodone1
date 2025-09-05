@@ -97,9 +97,16 @@ if selected_game_str:
         
         col1, col2, col3, col4, col5 = st.columns(5)
         
-        # Get team logos
-        away_logo = team_desc.loc[team_desc['team_abbr'] == away_abbr, 'team_logo_espn'].values[0] if len(team_desc.loc[team_desc['team_abbr'] == away_abbr]) > 0 else ""
-        home_logo = team_desc.loc[team_desc['team_abbr'] == home_abbr, 'team_logo_espn'].values[0] if len(team_desc.loc[team_desc['team_abbr'] == home_abbr]) > 0 else ""
+        # Get team logos with error handling
+        try:
+            away_logo = team_desc.loc[team_desc['team_abbr'] == away_abbr, 'team_logo_espn'].values[0] if len(team_desc.loc[team_desc['team_abbr'] == away_abbr]) > 0 else ""
+        except:
+            away_logo = ""
+            
+        try:
+            home_logo = team_desc.loc[team_desc['team_abbr'] == home_abbr, 'team_logo_espn'].values[0] if len(team_desc.loc[team_desc['team_abbr'] == home_abbr]) > 0 else ""
+        except:
+            home_logo = ""
         
         # Determine spread display based on betting convention
         spread_magnitude = abs(game_details.get('spread_line', 0))
@@ -122,12 +129,28 @@ if selected_game_str:
         away_ml_str = f"+{int(away_moneyline)}" if away_moneyline > 0 else f"{int(away_moneyline)}"
         home_ml_str = f"+{int(home_moneyline)}" if home_moneyline > 0 else f"{int(home_moneyline)}"
         
-        col1.image(away_logo, width=70)
+        # Display logos with error handling
+        try:
+            if away_logo:
+                col1.image(away_logo, width=70)
+            else:
+                col1.write(f"**{away_abbr}**")
+        except:
+            col1.write(f"**{away_abbr}**")
+            
         col1.markdown(f"<p style='text-align: center; margin: 0; font-weight: bold; color: #1f77b4;'>{away_ml_str}</p>", unsafe_allow_html=True)
         col2.metric("Away Spread", f"{away_spread_vegas:+.1f}")
         col3.metric("Over/Under", f"{total_line:.1f}")
         col4.metric("Home Spread", f"{home_spread_vegas:+.1f}")
-        col5.image(home_logo, width=70)
+        
+        try:
+            if home_logo:
+                col5.image(home_logo, width=70)
+            else:
+                col5.write(f"**{home_abbr}**")
+        except:
+            col5.write(f"**{home_abbr}**")
+            
         col5.markdown(f"<p style='text-align: center; margin: 0; font-weight: bold; color: #1f77b4;'>{home_ml_str}</p>", unsafe_allow_html=True)
 
         # --- Model Predictions ---

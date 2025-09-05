@@ -157,16 +157,37 @@ if selected_game_str:
     game_details = week_schedule[week_schedule['game_description'] == selected_game_str].iloc[0]
     away_abbr, home_abbr = selected_game_str.split(' @ ')
     
-    # Display game info
+    # Display game info with safe logo handling
     st.subheader("🎰 Game Information")
     col1, col2, col3 = st.columns(3)
     
     with col1:
         st.write(f"**Away Team:** {away_abbr}")
+        # Try to show logo safely
+        try:
+            away_logo = team_desc.loc[team_desc['team_abbr'] == away_abbr, 'team_logo_espn'].values[0] if len(team_desc.loc[team_desc['team_abbr'] == away_abbr]) > 0 else ""
+            if away_logo:
+                st.image(away_logo, width=50)
+        except Exception as e:
+            st.caption(f"Logo error: {str(e)}")
+            
     with col2:
         st.write(f"**Home Team:** {home_abbr}")
+        # Try to show logo safely
+        try:
+            home_logo = team_desc.loc[team_desc['team_abbr'] == home_abbr, 'team_logo_espn'].values[0] if len(team_desc.loc[team_desc['team_abbr'] == home_abbr]) > 0 else ""
+            if home_logo:
+                st.image(home_logo, width=50)
+        except Exception as e:
+            st.caption(f"Logo error: {str(e)}")
+            
     with col3:
         st.write(f"**Week:** {CURRENT_WEEK}")
+        # Show betting lines if available
+        spread_line = game_details.get('spread_line', 0)
+        total_line = game_details.get('total_line', 0)
+        st.write(f"**Spread:** {home_abbr} {spread_line:+.1f}")
+        st.write(f"**Total:** {total_line:.1f}")
     
     # Safe prediction generation
     st.header("🤖 Model Predictions")

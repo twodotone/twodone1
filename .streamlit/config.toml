@@ -2,12 +2,18 @@
 fileWatcherType = "none"
 runOnSave = false
 allowRunOnSave = false
+maxUploadSize = 50
 
 [runner]
 fastReruns = false
+enforceSerializableSessionState = false
 
 [client]
 toolbarMode = "minimal"
+showErrorDetails = true
 
 [theme]
 base = "dark"
+
+[global]
+developmentMode = false

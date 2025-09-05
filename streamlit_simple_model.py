@@ -19,16 +19,31 @@ class StreamlitSimpleNFLModel:
         self.pbp_data = None
         
     def load_data_from_parquet(self, years: list) -> None:
-        """Load play-by-play data from parquet files."""
+        """Load play-by-play data from parquet files with memory optimization."""
         import os
         
         dfs = []
         for year in years:
             file_path = os.path.join(self.data_dir, f"pbp_{year}.parquet")
             if os.path.exists(file_path):
-                df = pd.read_parquet(file_path)
-                dfs.append(df)
-                print(f"Loaded {year}: {len(df):,} plays")
+                # Load only essential columns to reduce memory
+                try:
+                    df = pd.read_parquet(file_path, columns=[
+                        'season', 'week', 'posteam', 'defteam', 'play_type', 'epa'
+                    ])
+                    # Filter to only pass/run plays with valid EPA
+                    df = df[
+                        (df['play_type'].isin(['pass', 'run'])) & 
+                        (~df['epa'].isna())
+                    ].copy()
+                    dfs.append(df)
+                    print(f"Loaded {year}: {len(df):,} plays")
+                except Exception as e:
+                    print(f"Error loading {year}: {e}")
+                    # Fallback to full load
+                    df = pd.read_parquet(file_path)
+                    dfs.append(df)
+                    print(f"Loaded {year} (fallback): {len(df):,} plays")
         
         if dfs:
             self.pbp_data = pd.concat(dfs, ignore_index=True)

@@ -23,6 +23,8 @@ class StreamlitSimpleNFLModel:
         import os
         
         dfs = []
+        loaded_years = []
+        
         for year in years:
             file_path = os.path.join(self.data_dir, f"pbp_{year}.parquet")
             if os.path.exists(file_path):
@@ -36,20 +38,33 @@ class StreamlitSimpleNFLModel:
                         (df['play_type'].isin(['pass', 'run'])) & 
                         (~df['epa'].isna())
                     ].copy()
-                    dfs.append(df)
-                    print(f"Loaded {year}: {len(df):,} plays")
+                    
+                    if len(df) > 0:  # Only add if there's actual data
+                        dfs.append(df)
+                        loaded_years.append(year)
+                        print(f"Loaded {year}: {len(df):,} plays")
+                    else:
+                        print(f"Skipped {year}: file exists but no valid plays")
+                        
                 except Exception as e:
                     print(f"Error loading {year}: {e}")
-                    # Fallback to full load
-                    df = pd.read_parquet(file_path)
-                    dfs.append(df)
-                    print(f"Loaded {year} (fallback): {len(df):,} plays")
+                    # Try fallback to full load
+                    try:
+                        df = pd.read_parquet(file_path)
+                        if len(df) > 0:
+                            dfs.append(df)
+                            loaded_years.append(year)
+                            print(f"Loaded {year} (fallback): {len(df):,} plays")
+                    except Exception as e2:
+                        print(f"Failed to load {year} completely: {e2}")
+            else:
+                print(f"File not found: {file_path}")
         
         if dfs:
             self.pbp_data = pd.concat(dfs, ignore_index=True)
-            print(f"Total plays loaded: {len(self.pbp_data):,}")
+            print(f"Total plays loaded from years {loaded_years}: {len(self.pbp_data):,}")
         else:
-            raise FileNotFoundError("No play-by-play data files found")
+            raise FileNotFoundError("No play-by-play data files found or all files were empty")
     
     def calculate_team_epa_stats(self, team: str, pbp_df: pd.DataFrame) -> Dict[str, float]:
         """Calculate EPA statistics for a team."""

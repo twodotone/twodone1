@@ -62,9 +62,30 @@ def load_data():
 
 @st.cache_data
 def load_simple_model():
-    """Load and cache the simple model"""
+    """Load and cache the simple model with safe year loading"""
     simple_model = StreamlitSimpleNFLModel(data_dir="data")
-    simple_model.load_data_from_parquet([2022, 2023, 2024])
+    
+    # Try to load years safely, starting with guaranteed years
+    years_to_load = [2022, 2023, 2024]
+    
+    # Check if 2025 data exists before adding it
+    import os
+    if os.path.exists(os.path.join("data", "pbp_2025.parquet")):
+        try:
+            # Test if 2025 file has actual data
+            import pandas as pd
+            df_2025 = pd.read_parquet(os.path.join("data", "pbp_2025.parquet"))
+            if len(df_2025) > 0:
+                years_to_load.append(2025)
+                st.success(f"✅ Loading with 2025 data ({len(df_2025)} plays)")
+            else:
+                st.info("ℹ️ 2025 data file exists but is empty - using historical data only")
+        except Exception as e:
+            st.warning(f"⚠️ 2025 data file exists but couldn't be loaded: {str(e)}")
+    else:
+        st.info("ℹ️ No 2025 data available yet - using historical data only")
+    
+    simple_model.load_data_from_parquet(years_to_load)
     return simple_model
 
 @st.cache_data  

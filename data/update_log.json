@@ -1,21 +1,5 @@
 {
-  "last_update": "2025-09-04T17:42:13.764329",
-  "years_updated": [
-    2022,
-    2023,
-    2024,
-    2025
-  ],
-  "files_created": [
-    "odds_2025.parquet",
-    "pbp_2022.parquet",
-    "pbp_2023.parquet",
-    "pbp_2024.parquet",
-    "pbp_2025.parquet",
-    "schedule_2022.parquet",
-    "schedule_2023.parquet",
-    "schedule_2024.parquet",
-    "schedule_2025.parquet",
-    "teams.parquet"
-  ]
+  "last_update": "2025-09-08T23:30:02.691008Z",
+  "update_type": "full_with_2025",
+  "timestamp": "2025-09-08 17:30:02"
 }

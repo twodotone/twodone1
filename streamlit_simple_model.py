@@ -82,20 +82,38 @@ class StreamlitSimpleNFLModel:
             (~pbp_df['epa'].isna())
         ]
         
-        if len(offensive_plays) == 0 or len(defensive_plays) == 0:
+        # Check for minimum data requirements
+        min_plays = 10  # Require at least 10 plays for meaningful stats
+        
+        if len(offensive_plays) < min_plays:
+            print(f"Warning: {team} has only {len(offensive_plays)} offensive plays (minimum {min_plays})")
+            if len(offensive_plays) == 0:
+                return {}
+        
+        if len(defensive_plays) < min_plays:
+            print(f"Warning: {team} has only {len(defensive_plays)} defensive plays (minimum {min_plays})")
+            if len(defensive_plays) == 0:
+                return {}
+        
+        try:
+            off_epa = offensive_plays['epa'].mean()
+            def_epa = defensive_plays['epa'].mean()
+            net_epa = off_epa - def_epa
+            
+            # Validate EPA values are reasonable
+            if abs(off_epa) > 1.0 or abs(def_epa) > 1.0:
+                print(f"Warning: {team} has extreme EPA values - Off: {off_epa:.3f}, Def: {def_epa:.3f}")
+            
+            return {
+                'off_epa_per_play': off_epa,
+                'def_epa_per_play': def_epa,
+                'net_epa_per_play': net_epa,
+                'offensive_plays': len(offensive_plays),
+                'defensive_plays': len(defensive_plays)
+            }
+        except Exception as e:
+            print(f"Error calculating EPA for {team}: {e}")
             return {}
-        
-        off_epa = offensive_plays['epa'].mean()
-        def_epa = defensive_plays['epa'].mean()
-        net_epa = off_epa - def_epa
-        
-        return {
-            'off_epa_per_play': off_epa,
-            'def_epa_per_play': def_epa,
-            'net_epa_per_play': net_epa,
-            'offensive_plays': len(offensive_plays),
-            'defensive_plays': len(defensive_plays)
-        }
     
     def predict_spread(self, home_team: str, away_team: str, week: int, year: int) -> Tuple[float, Dict]:
         """Predict the spread for a game."""

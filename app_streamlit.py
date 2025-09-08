@@ -193,21 +193,45 @@ if selected_game_str:
                 try:
                     simple_model = load_simple_model()
                     
-                    # Generate predictions
-                    simple_model_spread, simple_model_details = simple_model.predict_spread(
-                        home_abbr, away_abbr, CURRENT_WEEK, CURRENT_YEAR
-                    )
-                    
-                    # Generate total prediction
-                    try:
-                        simple_model_total, simple_total_details = simple_model.predict_total(
-                            home_abbr, away_abbr, CURRENT_WEEK, CURRENT_YEAR
-                        )
-                    except Exception as e:
-                        st.warning(f"Total prediction failed: {e}")
+                    # Validate teams exist in data
+                    if simple_model.pbp_data is not None:
+                        available_teams = set(simple_model.pbp_data['posteam'].dropna().unique()) | set(simple_model.pbp_data['defteam'].dropna().unique())
+                        
+                        if home_abbr not in available_teams:
+                            st.error(f"Team {home_abbr} not found in play-by-play data")
+                            st.write(f"Available teams: {sorted(available_teams)}")
+                            show_simple_model = False
+                        elif away_abbr not in available_teams:
+                            st.error(f"Team {away_abbr} not found in play-by-play data")
+                            st.write(f"Available teams: {sorted(available_teams)}")
+                            show_simple_model = False
+                        else:
+                            # Generate predictions with team validation
+                            try:
+                                simple_model_spread, simple_model_details = simple_model.predict_spread(
+                                    home_abbr, away_abbr, CURRENT_WEEK, CURRENT_YEAR
+                                )
+                                st.success(f"✅ Simple Model: {home_abbr} {simple_model_spread:+.1f}")
+                                
+                                # Generate total prediction
+                                try:
+                                    simple_model_total, simple_total_details = simple_model.predict_total(
+                                        home_abbr, away_abbr, CURRENT_WEEK, CURRENT_YEAR
+                                    )
+                                except Exception as e:
+                                    st.warning(f"Total prediction failed for {home_abbr} vs {away_abbr}: {e}")
+                                    
+                            except Exception as e:
+                                st.error(f"Prediction failed for {home_abbr} vs {away_abbr}: {e}")
+                                st.write(f"Error details: {str(e)}")
+                                show_simple_model = False
+                    else:
+                        st.error("No play-by-play data loaded in model")
+                        show_simple_model = False
                         
                 except Exception as e:
                     st.error(f"Simple model failed to load: {e}")
+                    st.exception(e)
                     show_simple_model = False
 
         # Load Standard Model (Real Standard Model with tiered historical stats)

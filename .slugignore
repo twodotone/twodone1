@@ -1,0 +1,24 @@
+# Streamlit Cloud deployment configuration
+
+# Core app file
+app_streamlit.py
+
+# Model files
+streamlit_simple_model.py
+streamlit_real_standard_model.py
+streamlit_data_loader.py
+
+# Core backend
+stats_calculator.py
+team_mapping.py
+dynamic_hfa.py
+hfa_data.py
+
+# Data directory
+data/
+
+# Requirements
+requirements_streamlit.txt
+
+# Config
+.streamlit/

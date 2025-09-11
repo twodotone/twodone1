@@ -3,6 +3,8 @@
 import streamlit as st
 import pandas as pd
 import os
+import sys
+import traceback
 from streamlit_data_loader import StreamlitDataLoader, check_data_freshness
 from streamlit_simple_model import StreamlitSimpleNFLModel
 from streamlit_real_standard_model import StreamlitRealStandardModel
@@ -14,9 +16,32 @@ from stats_calculator import (
     generate_stable_matchup_line
 )
 
+# Add global error handling for deployment
+def handle_deployment_error(error, context=""):
+    """Handle errors gracefully for deployment"""
+    error_msg = f"Deployment Error in {context}: {str(error)}"
+    st.error(error_msg)
+    st.write("**Error Details:**")
+    st.code(traceback.format_exc())
+    st.write("**Troubleshooting Steps:**")
+    st.write("1. Try refreshing the page")
+    st.write("2. Select a different week/year combination")
+    st.write("3. Contact support if the issue persists")
+    return None
+
 # --- Page & Sidebar Configuration ---
 st.set_page_config(page_title="NFL Matchup Analyzer", layout="wide")
 st.title('🏈 NFL Matchup Analyzer - Production')
+
+# Check if we're in deployment environment
+IS_DEPLOYMENT = os.getenv('STREAMLIT_SHARING', 'false').lower() == 'true' or \
+                'streamlit.app' in os.getenv('HOSTNAME', '') or \
+                os.getenv('STREAMLIT_CLOUD', 'false').lower() == 'true'
+
+if IS_DEPLOYMENT:
+    st.sidebar.info("🌟 Running on Streamlit Cloud")
+    # Reduce memory usage for deployment
+    os.environ['PYTHONHASHSEED'] = '0'  # Make Python hash-stable
 
 # --- Data Freshness Check ---
 with st.sidebar:
@@ -42,7 +67,7 @@ show_simple_model = st.sidebar.checkbox('Show Simple Model', value=True,
                                        help="Shows transparent EPA-based model")
 
 # --- Data Loading ---
-@st.cache_data
+@st.cache_data(max_entries=1, ttl=3600)  # Limit cache for deployment
 def load_data():
     """Load all necessary data with caching"""
     loader = StreamlitDataLoader()
@@ -60,13 +85,19 @@ def load_data():
         st.error(f"Could not load data: {e}")
         st.stop()
 
-@st.cache_data
+@st.cache_data(max_entries=1, ttl=3600)  # Limit cache and add TTL for deployment
 def load_simple_model():
     """Load and cache the simple model with safe year loading"""
     simple_model = StreamlitSimpleNFLModel(data_dir="data")
     
-    # Try to load years safely, starting with guaranteed years
-    years_to_load = [2022, 2023, 2024]
+    # Optimize for deployment - use fewer years if on deployment
+    if IS_DEPLOYMENT:
+        # Use only recent years for deployment to save memory
+        years_to_load = [2023, 2024]
+        st.info("🌐 Deployment mode: Using optimized data (2023-2024)")
+    else:
+        # Try to load years safely, starting with guaranteed years
+        years_to_load = [2022, 2023, 2024]
     
     # Check if 2025 data exists before adding it
     import os
@@ -88,21 +119,31 @@ def load_simple_model():
     simple_model.load_data_from_parquet(years_to_load)
     return simple_model
 
-@st.cache_data  
+@st.cache_data(max_entries=1, ttl=1800)  # Shorter TTL for standard model
 def load_standard_model(current_year, current_week):
     """Load and cache the real standard model"""
     standard_model = StreamlitRealStandardModel(data_dir="data")
     standard_model.load_standard_data(current_year, current_week)
     return standard_model
 
-team_desc, schedule_data = load_data()
+try:
+    team_desc, schedule_data = load_data()
+except Exception as e:
+    handle_deployment_error(e, "Data Loading")
+    st.stop()
 
 # --- Main Page: Matchup Selection ---
-st.header(f'Week {CURRENT_WEEK} Matchups for the {CURRENT_YEAR} Season')
-week_schedule = schedule_data[schedule_data['week'] == CURRENT_WEEK].copy()
+try:
+    st.header(f'Week {CURRENT_WEEK} Matchups for the {CURRENT_YEAR} Season')
+    week_schedule = schedule_data[schedule_data['week'] == CURRENT_WEEK].copy()
 
-if week_schedule.empty:
-    st.warning(f"No schedule found for Week {CURRENT_WEEK} of the {CURRENT_YEAR} season.")
+    if week_schedule.empty:
+        st.warning(f"No schedule found for Week {CURRENT_WEEK} of the {CURRENT_YEAR} season.")
+        st.info("Available weeks in schedule:")
+        st.write(sorted(schedule_data['week'].unique()))
+        st.stop()
+except Exception as e:
+    handle_deployment_error(e, "Schedule Loading")
     st.stop()
 
 week_schedule['game_description'] = week_schedule['away_team'] + ' @ ' + week_schedule['home_team']
